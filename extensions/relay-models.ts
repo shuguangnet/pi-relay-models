@@ -60,6 +60,7 @@ interface RelaySnapshot {
 
 const CONFIG_PATH = join(homedir(), ".pi", "agent", "relay-models.json");
 const CACHE_PATH = join(homedir(), ".pi", "agent", "relay-models.cache.json");
+const SNAPSHOT_PATH = join(homedir(), ".pi", "agent", "relay-models.snapshot.json");
 const DEV_API_URL = "https://models.dev/api.json";
 const DEV_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -100,6 +101,22 @@ async function saveConfig(cfg: RelayConfig): Promise<void> {
   await mkdir(join(homedir(), ".pi", "agent"), { recursive: true });
   await writeFile(CONFIG_PATH, JSON.stringify(cfg, null, 2) + "\n", "utf8");
   await chmod(CONFIG_PATH, 0o600).catch(() => {});
+}
+
+async function saveSnapshot(snapshot: RelaySnapshot): Promise<void> {
+  await mkdir(join(homedir(), ".pi", "agent"), { recursive: true });
+  await writeFile(SNAPSHOT_PATH, JSON.stringify(snapshot), "utf8");
+}
+
+async function loadSnapshot(): Promise<RelaySnapshot | null> {
+  try {
+    const raw = await readFile(SNAPSHOT_PATH, "utf8");
+    const snap = JSON.parse(raw) as RelaySnapshot;
+    if (snap?.rows?.length) return snap;
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 // ---------- models.dev 索引 ----------
@@ -270,7 +287,7 @@ function renderTable(snapshot: RelaySnapshot, expanded: boolean): Box {
   return box;
 }
 
-export default function (pi: ExtensionAPI) {
+export default async function (pi: ExtensionAPI) {
   // 注册自定义条目渲染器（会话内持久展示，不进 LLM 上下文）
   pi.registerEntryRenderer(ENTRY_TYPE, (entry, { expanded }) => {
     const snapshot = (entry.data as { snapshot: RelaySnapshot }).snapshot;
@@ -280,12 +297,25 @@ export default function (pi: ExtensionAPI) {
   let cachedSnapshot: RelaySnapshot | null = null;
   let registeredFor = ""; // baseUrl+providerId，避免重复注册
 
-  // 恢复上次快照（/reload 后表格仍在）
+  // 启动即恢复 provider 注册：配置 + 上次快照存在则直接注册，
+  // factory 阶段的 registerProvider 会在 runner 初始化时生效（/model、--list-models 可见）
+  try {
+    const [cfg0, snap0] = await Promise.all([loadConfig(), loadSnapshot()]);
+    if (cfg0?.registerProvider && snap0 && snap0.baseUrl === cfg0.baseUrl) {
+      cachedSnapshot = snap0;
+      registerRelayProvider(cfg0, snap0);
+    }
+  } catch { /* 启动恢复失败不阻塞加载 */ }
+
+  // 恢复上次快照（/reload 后表格仍在；磁盘快照兑底）
   pi.on("session_start", async (_event, ctx) => {
     for (const entry of ctx.sessionManager.getBranch()) {
       if (entry.type === "custom" && entry.customType === ENTRY_TYPE) {
         cachedSnapshot = (entry.data as { snapshot: RelaySnapshot }).snapshot;
       }
+    }
+    if (!cachedSnapshot) {
+      cachedSnapshot = await loadSnapshot().catch(() => null);
     }
   });
 
@@ -364,6 +394,7 @@ export default function (pi: ExtensionAPI) {
         const devIndex = await loadDevIndex();
         const snapshot = await fetchRelayModels(cfg, devIndex);
         cachedSnapshot = snapshot;
+        await saveSnapshot(snapshot); // 持久化，重启后自动恢复 provider 注册
 
         // 展示（自定义条目，持久保留在会话里）
         pi.appendEntry(ENTRY_TYPE, { snapshot });
