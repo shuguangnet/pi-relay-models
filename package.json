@@ -1,0 +1,28 @@
+{
+  "name": "pi-relay-models",
+  "version": "1.0.0",
+  "description": "One-click fetch models & context window sizes from an OpenAI-compatible relay (New API / One API / OpenRouter-style). Registers them as a pi provider.",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "relay",
+    "models",
+    "context-window",
+    "new-api",
+    "one-api"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shuguangnet/pi-relay-models.git"
+  },
+  "pi": {
+    "extensions": ["./extensions"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  }
+}
